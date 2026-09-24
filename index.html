@@ -84,6 +84,29 @@
     }
     #output:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+    .dist-list {
+      max-height: 160px;
+      overflow-y: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--field);
+    }
+    .dist-row {
+      display: grid;
+      grid-template-columns: 22px 1fr auto;
+      gap: 8px;
+      align-items: baseline;
+      padding: 6px 10px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .dist-row:last-child { border-bottom: none; }
+    .dist-num { color: var(--muted); }
+    .dist-coord { color: var(--ink); }
+    .dist-seg { color: var(--accent); white-space: nowrap; }
+    .dist-empty { margin: 0; padding: 10px 12px; color: var(--muted); font-size: 0.8rem; }
+
     .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     button {
       font: inherit;
@@ -117,6 +140,24 @@
     .start-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
     #startCoords { font-family: var(--mono); font-size: 0.85rem; margin: 0; word-break: break-all; }
     #startMeta { margin: 2px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+    .start-body > button { width: 100%; }
+
+    /* ---------- coordinate inputs (start-by-coordinates, bbox spacing) ---------- */
+    .coord-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+    .field input {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--field);
+      color: var(--ink);
+      width: 100%;
+    }
+    .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .actions-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #bboxInfo, #gridEstimate { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
 
     /* ---------- map pins ---------- */
     .pin {
@@ -160,6 +201,14 @@
               aria-label="Waypoint coordinates"
               placeholder="Waypoints will appear here as you click the map."></textarea>
 
+    <div class="count">
+      <strong>Distance between waypoints</strong>
+      <span id="totalDistance"></span>
+    </div>
+    <div id="distanceList" class="dist-list" aria-label="Distance between consecutive waypoints">
+      <p class="dist-empty">Add waypoints to see distances.</p>
+    </div>
+
     <div class="actions">
       <button id="copy" class="primary" disabled>Copy coordinates</button>
       <button id="download" disabled>Download</button>
@@ -179,6 +228,35 @@
           <button id="goStart">Go to start</button>
           <button id="copyLink">Copy link</button>
           <button id="useDefault">Use default</button>
+        </div>
+        <div class="coord-row">
+          <label class="field">
+            <span>Latitude</span>
+            <input type="number" id="startLatInput" step="any" min="-90" max="90" placeholder="e.g. 40.7128">
+          </label>
+          <label class="field">
+            <span>Longitude</span>
+            <input type="number" id="startLonInput" step="any" min="-180" max="180" placeholder="e.g. -74.0060">
+          </label>
+        </div>
+        <button id="setStartCoords">Set start from coordinates</button>
+      </div>
+    </details>
+
+    <details id="bboxBox">
+      <summary>Bounding box grid</summary>
+      <div class="start-body">
+        <p class="hint" style="margin:0;">Click "Draw bounding box", then click and drag on the map to mark opposite corners. Waypoints generate in a lawn-mower (back-and-forth) path.</p>
+        <button id="drawBbox">Draw bounding box</button>
+        <p id="bboxInfo">No box drawn yet.</p>
+        <label class="field">
+          <span>Spacing between waypoints (meters)</span>
+          <input type="number" id="spacing" step="any" min="1" value="50">
+        </label>
+        <p id="gridEstimate"></p>
+        <div class="actions-2">
+          <button id="generateGrid" class="primary" disabled>Generate grid</button>
+          <button id="clearBbox" class="danger" disabled>Clear box</button>
         </div>
       </div>
     </details>
@@ -242,6 +320,17 @@
         goStart: document.getElementById("goStart"),
         copyLink: document.getElementById("copyLink"),
         useDefault: document.getElementById("useDefault"),
+        startLatInput: document.getElementById("startLatInput"),
+        startLonInput: document.getElementById("startLonInput"),
+        setStartCoords: document.getElementById("setStartCoords"),
+        drawBbox: document.getElementById("drawBbox"),
+        bboxInfo: document.getElementById("bboxInfo"),
+        spacing: document.getElementById("spacing"),
+        gridEstimate: document.getElementById("gridEstimate"),
+        generateGrid: document.getElementById("generateGrid"),
+        clearBbox: document.getElementById("clearBbox"),
+        distanceList: document.getElementById("distanceList"),
+        totalDistance: document.getElementById("totalDistance"),
       };
 
       // ---------- basemaps (from config.js) ----------
@@ -361,6 +450,27 @@
         flash(els.copyLink, (await copyText(url)) ? "Copied" : "Copy failed");
       });
 
+      els.setStartCoords.addEventListener("click", () => {
+        const lat = num(els.startLatInput.value);
+        const lon = num(els.startLonInput.value);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+            Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+          window.alert("Enter a latitude between -90 and 90, and a longitude between -180 and 180.");
+          return;
+        }
+        start = {
+          lat: Number(lat.toFixed(8)),
+          lon: Number(lon.toFixed(8)),
+          zoom: map.getZoom(),
+          layer: currentLayer,
+        };
+        hasSaved = writeSaved(start);
+        startSource = hasSaved ? "saved in this browser" : "this session only";
+        map.setView([start.lat, start.lon], start.zoom);
+        renderStart();
+        flash(els.setStartCoords, hasSaved ? "Start saved" : "Saved for this session");
+      });
+
       els.useDefault.addEventListener("click", () => {
         eraseSaved();
         hasSaved = false;
@@ -376,6 +486,36 @@
       const line = L.polyline([], { color: "#0b6e8a", weight: 3, opacity: 0.8, dashArray: "6 6" }).addTo(map);
 
       const fmt = (ll) => ll.lat.toFixed(DECIMALS) + ", " + ll.lng.toFixed(DECIMALS);
+
+      function formatDistance(m) {
+        if (!Number.isFinite(m)) return "";
+        return m >= 1000 ? (m / 1000).toFixed(2) + " km" : m.toFixed(1) + " m";
+      }
+
+      function renderDistances() {
+        if (!markers.length) {
+          els.distanceList.innerHTML = '<p class="dist-empty">Add waypoints to see distances.</p>';
+          els.totalDistance.textContent = "";
+          return;
+        }
+        let total = 0;
+        const rows = markers.map((m, i) => {
+          const c = m.getLatLng();
+          let seg = "start";
+          if (i > 0) {
+            const d = markers[i - 1].getLatLng().distanceTo(c);
+            total += d;
+            seg = "+" + formatDistance(d);
+          }
+          return (
+            '<div class="dist-row"><span class="dist-num">' + (i + 1) + "</span>" +
+            '<span class="dist-coord">' + fmt(c) + "</span>" +
+            '<span class="dist-seg">' + seg + "</span></div>"
+          );
+        });
+        els.distanceList.innerHTML = rows.join("");
+        els.totalDistance.textContent = markers.length > 1 ? "Total: " + formatDistance(total) : "";
+      }
 
       function pinIcon(n) {
         return L.divIcon({
@@ -398,8 +538,9 @@
         els.copy.disabled = empty;
         els.download.disabled = empty;
         els.undo.disabled = empty;
-        els.clear.disabled = empty;
+        els.clear.disabled = empty && !bboxBounds;
         els.output.scrollTop = els.output.scrollHeight;
+        renderDistances();
       }
 
       function removeMarker(marker) {
@@ -410,7 +551,7 @@
         render();
       }
 
-      function addWaypoint(latlng) {
+      function addWaypoint(latlng, skipRender) {
         const marker = L.marker(latlng.wrap(), {
           draggable: true,
           icon: pinIcon(markers.length + 1),
@@ -435,10 +576,14 @@
         });
 
         markers.push(marker);
-        render();
+        if (!skipRender) render();
       }
 
-      map.on("click", (e) => addWaypoint(e.latlng));
+      let suppressNextClick = false;
+      map.on("click", (e) => {
+        if (bboxModeOn || suppressNextClick) { suppressNextClick = false; return; }
+        addWaypoint(e.latlng);
+      });
 
       els.output.addEventListener("focus", () => els.output.select());
       els.output.addEventListener("click", () => els.output.select());
@@ -465,13 +610,144 @@
       });
 
       els.clear.addEventListener("click", () => {
-        if (!markers.length) return;
-        if (!window.confirm("Remove all " + markers.length + " waypoints?")) return;
+        if (!markers.length && !bboxBounds) return;
+        const parts = [];
+        if (markers.length) parts.push(markers.length + " waypoint" + (markers.length === 1 ? "" : "s"));
+        if (bboxBounds) parts.push("the bounding box");
+        if (!window.confirm("Remove " + parts.join(" and ") + "?")) return;
         markers.splice(0).forEach((m) => m.remove());
+        if (bboxLayer) { map.removeLayer(bboxLayer); bboxLayer = null; }
+        bboxBounds = null;
+        renderBbox();
+        render();
+      });
+
+      // ---------- bounding box grid ----------
+      let bboxModeOn = false;
+      let bboxLayer = null;
+      let bboxBounds = null;
+      let drawing = false;
+      let drawStart = null;
+
+      function metersToLatDeg(m) { return m / 111320; }
+      function metersToLonDeg(m, atLat) { return m / (111320 * Math.cos((atLat * Math.PI) / 180)); }
+
+      function setBboxMode(on) {
+        bboxModeOn = on;
+        if (!els.drawBbox.dataset.label) els.drawBbox.dataset.label = els.drawBbox.textContent;
+        if (on) {
+          map.dragging.disable();
+          els.drawBbox.textContent = "Click and drag on the map\u2026";
+        } else {
+          map.dragging.enable();
+          els.drawBbox.textContent = els.drawBbox.dataset.label;
+        }
+      }
+
+      els.drawBbox.addEventListener("click", () => setBboxMode(!bboxModeOn));
+
+      map.on("mousedown", (e) => {
+        if (!bboxModeOn) return;
+        drawing = true;
+        drawStart = e.latlng;
+        if (bboxLayer) { map.removeLayer(bboxLayer); bboxLayer = null; }
+        bboxLayer = L.rectangle([drawStart, drawStart], {
+          color: "#e67e22", weight: 2, fillOpacity: 0.08, dashArray: "4 4",
+        }).addTo(map);
+      });
+
+      map.on("mousemove", (e) => {
+        if (!drawing) return;
+        bboxLayer.setBounds(L.latLngBounds(drawStart, e.latlng));
+      });
+
+      function finishDrawing() {
+        drawing = false;
+        bboxBounds = bboxLayer.getBounds();
+        setBboxMode(false);
+        suppressNextClick = true;
+        renderBbox();
+        render();
+      }
+      map.on("mouseup", () => { if (drawing) finishDrawing(); });
+      document.addEventListener("mouseup", () => { if (drawing) finishDrawing(); });
+
+      function renderBbox() {
+        if (!bboxBounds) {
+          els.bboxInfo.textContent = "No box drawn yet.";
+          els.generateGrid.disabled = true;
+          els.clearBbox.disabled = true;
+          els.gridEstimate.textContent = "";
+          return;
+        }
+        const sw = bboxBounds.getSouthWest();
+        const ne = bboxBounds.getNorthEast();
+        els.bboxInfo.textContent =
+          "SW " + sw.lat.toFixed(DECIMALS) + ", " + sw.lng.toFixed(DECIMALS) +
+          "  \u2192  NE " + ne.lat.toFixed(DECIMALS) + ", " + ne.lng.toFixed(DECIMALS);
+        els.generateGrid.disabled = false;
+        els.clearBbox.disabled = false;
+        updateGridEstimate();
+      }
+
+      function gridDims() {
+        if (!bboxBounds) return null;
+        const spacing = Number(els.spacing.value);
+        if (!Number.isFinite(spacing) || spacing <= 0) return null;
+        const sw = bboxBounds.getSouthWest();
+        const ne = bboxBounds.getNorthEast();
+        const midLat = (sw.lat + ne.lat) / 2;
+        const latSpan = Math.max(ne.lat - sw.lat, 0);
+        const lonSpan = Math.max(ne.lng - sw.lng, 0);
+        const latStep = metersToLatDeg(spacing);
+        const lonStep = metersToLonDeg(spacing, midLat);
+        const rows = latStep > 0 ? Math.floor(latSpan / latStep) + 1 : 1;
+        const cols = lonStep > 0 ? Math.floor(lonSpan / lonStep) + 1 : 1;
+        return { sw, ne, latStep, lonStep, rows, cols };
+      }
+
+      function updateGridEstimate() {
+        const d = gridDims();
+        if (!d) {
+          els.gridEstimate.textContent = "Enter a spacing in meters to see how many points that makes.";
+          return;
+        }
+        const total = d.rows * d.cols;
+        els.gridEstimate.textContent = d.rows + " \u00d7 " + d.cols + " = " + total + " points" +
+          (total > 1000 ? " \u2014 that's a lot; consider a larger spacing." : "");
+      }
+      els.spacing.addEventListener("input", updateGridEstimate);
+
+      els.generateGrid.addEventListener("click", () => {
+        const d = gridDims();
+        if (!d) { window.alert("Enter a valid spacing in meters first."); return; }
+        const total = d.rows * d.cols;
+        if (total === 0) return;
+        if (total > 2000) {
+          window.alert("That spacing would generate " + total + " points, which is too many to add at once. Use a larger spacing.");
+          return;
+        }
+        for (let r = 0; r < d.rows; r++) {
+          const lat = d.sw.lat + r * d.latStep;
+          const leftToRight = r % 2 === 0;
+          for (let ci = 0; ci < d.cols; ci++) {
+            const c = leftToRight ? ci : d.cols - 1 - ci;
+            const lon = d.sw.lng + c * d.lonStep;
+            addWaypoint(L.latLng(lat, lon), true);
+          }
+        }
+        render();
+      });
+
+      els.clearBbox.addEventListener("click", () => {
+        if (bboxLayer) { map.removeLayer(bboxLayer); bboxLayer = null; }
+        bboxBounds = null;
+        renderBbox();
         render();
       });
 
       renderStart();
+      renderBbox();
       render();
     })();
   </script>

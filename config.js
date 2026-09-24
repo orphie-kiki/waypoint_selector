@@ -16,10 +16,9 @@ const CONFIG = {
   maxZoom: 20,
 
   // Decimal places used in the coordinate output
-  decimals: 10,
+  decimals: 8,
 
   // Which basemap is shown first (must match a "name" below)
-  //defaultLayer: "OpenStreetMap",  // this is the regular view
   defaultLayer: "Satellite (Esri)",
 
   // Basemaps shown in the layer switcher (top right of the map).
